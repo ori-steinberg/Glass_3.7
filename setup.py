@@ -10,7 +10,7 @@ with open('requirements.txt') as f:
     requirements = f.read().splitlines()
 
 setuptools.setup(
-    name="glass-text-spotting",
+    name="glass",
     version="0.1",
     author="Shahar Tsiper",
     author_email="tsiper@amazon.com",
