@@ -108,6 +108,51 @@ class GlassRunner:
         self.logger.info(f'Post-processing output is {len(preds)} word instances')
         return preds
 
+    def run_batch(self, img_list: List[np.ndarray]) -> List[Instances]:
+        """
+        Args:
+            img_list (List[np.ndarray]):
+
+        Returns:
+            preds (List[Instances])
+                the output of the model for one image only.
+                See :doc:`/tutorials/models` for details about the format.
+            original_image_tensor (torch.Tensor):
+        """
+        input_data = []
+        for original_image in img_list:
+            if self.input_format == "RGB":
+                # whether the model expects BGR inputs or RGB
+                original_image = original_image[:, :, ::-1]
+            if self.input_format == "GREY":
+                original_image = rgb2grey(original_image, three_channels=True)
+            image_height, image_width = original_image.shape[:2]
+
+            image_tensor, scale_ratio = self._image_to_tensor(original_image, self.model.device)
+            height = image_tensor.shape[1]
+            width = image_tensor.shape[2]
+            inputs = {'image': image_tensor, 'height': height, 'width': width,
+                      'scale_ratio': scale_ratio, 'origin_height': image_height, 'origin_width': image_width}
+            input_data.append(inputs)
+
+        with torch.no_grad():
+            raw_predictions = self.model(input_data)
+        preds = []
+        for raw_pred, img_data in zip(raw_predictions, input_data):
+            pred = raw_pred['instances']
+            _, _, _, scale_ratio, image_height, image_width = img_data.values()
+
+            # Scaling the predictions to the image domain
+            if scale_ratio != 1:
+                pred.pred_boxes.scale(1 / scale_ratio, 1 / scale_ratio)
+            pred._image_size = (image_height, image_width)
+
+            self.logger.info(f'Detected {len(pred)} raw word instances')
+            pred = self.post_processor(pred)
+            self.logger.info(f'Post-processing output is {len(pred)} word instances')
+            preds.append(pred)
+        return preds
+
     def get_inference_scale_ratio(self, image_shape):
         height, width = image_shape[:2]
         max_image_dim = max(height, width)
