@@ -33,7 +33,7 @@ class ResNetFeatureExtractor(nn.Module):
 class ResNetFeatureExtractorV2(nn.Module):
 
     def __init__(self, input_channel, output_channel=512):
-        super(ResNet_FeatureExtractorV2, self).__init__()
+        super(ResNetFeatureExtractorV2, self).__init__()
         self.ConvNet = ResNetV2(input_channel, output_channel, BasicBlock, [1, 2, 5, 3])
 
     def forward(self, input):

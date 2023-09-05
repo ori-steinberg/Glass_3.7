@@ -135,7 +135,7 @@ class MaskRotatedRecognizerHybridHead(StandardROIHeads):
 
     def forward(
             self,
-            images: ImageList,
+            images: torch.Tensor,
             features: Dict[str, torch.Tensor],
             proposals: List[Instances],
             targets: Optional[List[Instances]] = None,
@@ -144,41 +144,40 @@ class MaskRotatedRecognizerHybridHead(StandardROIHeads):
         See :class:`ROIHeads.forward`.
         """
 
-        if self.training:
-            assert targets, "'targets' argument is required during training"
-            proposals = self.label_and_sample_proposals(proposals, targets)
-        del targets
-
-        if self.training:
-            losses = self._forward_box(features, proposals)
-            # Usually the original proposals used by the box head are used by the mask, keypoint
-            # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
-            # predicted by the box head.
-
-            # We apply orientation following the box prediction, so the recognizer and mask
-            # get correctly predicted proposals, based on the gt orientation
-            if self.apply_orientation_to_proposals:
-                for i in range(len(proposals)):
-                    boxes = proposals[i].proposal_boxes.tensor
-                    if proposals[i].has('gt_orientation'):
-                        gt_orientations = proposals[i].gt_orientation
-                    else:
-                        gt_orientations = torch.tensor([0], device=proposals[i].proposal_boxes.tensor.device)
-                        self.logger.warning('No gt_orientation found')
-
-                    proposals[i].proposal_boxes.tensor = overwrite_orientations_on_boxes(boxes, gt_orientations)
-
-            losses.update(self._forward_recognizer(images, features, proposals))
-            losses.update(self._forward_mask(features, proposals))
-            losses.update(self._forward_keypoint(features, proposals))
-
-            return proposals, losses
-        else:
+        if not self.training:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
             # applied to the top scoring box detections.
-            pred_instances = self.forward_with_given_boxes(images, features, pred_instances)
-            return pred_instances, {}
+            pred_instances, pred_text_prob = self.forward_with_given_boxes(images, features, pred_instances)
+            return pred_instances, {'pred_text_prob': pred_text_prob}
+
+        assert targets, "'targets' argument is required during training"
+        proposals = self.label_and_sample_proposals(proposals, targets)
+        del targets
+
+        losses = self._forward_box(features, proposals)
+        # Usually the original proposals used by the box head are used by the mask, keypoint
+        # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
+        # predicted by the box head.
+
+        # We apply orientation following the box prediction, so the recognizer and mask
+        # get correctly predicted proposals, based on the gt orientation
+        if self.apply_orientation_to_proposals:
+            for i in range(len(proposals)):
+                boxes = proposals[i].proposal_boxes.tensor
+                if proposals[i].has('gt_orientation'):
+                    gt_orientations = proposals[i].gt_orientation
+                else:
+                    gt_orientations = torch.tensor([0], device=proposals[i].proposal_boxes.tensor.device)
+                    self.logger.warning('No gt_orientation found')
+
+                proposals[i].proposal_boxes.tensor = overwrite_orientations_on_boxes(boxes, gt_orientations)
+
+        losses.update(self._forward_recognizer(images, features, proposals))
+        losses.update(self._forward_mask(features, proposals))
+        losses.update(self._forward_keypoint(features, proposals))
+        return proposals, losses
+
 
     @classmethod
     def _init_box_head(cls, cfg, input_shape):
@@ -510,7 +509,7 @@ class MaskRotatedRecognizerHybridHead(StandardROIHeads):
         ret["recognizer_head"] = build_recognizer_head(cfg, shape)
         return ret
 
-    def _forward_recognizer(self, images: ImageList, features: Dict[str, torch.Tensor], instances: List[Instances]):
+    def _forward_recognizer(self, images: torch.Tensor, features: Dict[str, torch.Tensor], instances: List[Instances]):
         """
         Forward logic of the recognizer prediction branch.
 
@@ -553,7 +552,7 @@ class MaskRotatedRecognizerHybridHead(StandardROIHeads):
             # https://github.com/pytorch/pytorch/issues/41448
             features = dict([(f, features[f]) for f in self.recognizer_in_features])
 
-        local_features = self.img_pooler([images.tensor], boxes)
+        local_features = self.img_pooler([images], boxes)
 
         if local_features.shape[0] > 0:
             local_features = self.hybrid_net(local_features)
@@ -568,8 +567,7 @@ class MaskRotatedRecognizerHybridHead(StandardROIHeads):
         features = self.fusion_net(features)
         return self.recognizer_head(features, instances)
 
-    def forward_with_given_boxes(
-            self, images: ImageList, features: Dict[str, torch.Tensor], instances: List[Instances]
+    def forward_with_given_boxes(self, images: torch.Tensor, features: Dict[str, torch.Tensor], instances: List[Instances]
     ) -> List[Instances]:
         """
         Use the given boxes in `instances` to produce other (non-box) per-ROI outputs.

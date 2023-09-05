@@ -115,7 +115,7 @@ class PostProcessorAcademic(PostProcessorRotatedBoxes):
         return preds
 
 
-def detector_postprocess(results, output_height, output_width, mask_threshold=0.5):
+def detector_postprocess(results, image_data, mask_threshold=0.5):
     """
     Resize the output instances.
     The input images are often resized when entering an object detector.
@@ -138,21 +138,14 @@ def detector_postprocess(results, output_height, output_width, mask_threshold=0.
     # Converts integer tensors to float temporaries
     #   to ensure true division is performed when
     #   computing scale_x and scale_y.
-    if isinstance(output_width, torch.Tensor):
-        output_width_tmp = output_width.float()
-    else:
-        output_width_tmp = output_width
-
-    if isinstance(output_height, torch.Tensor):
-        output_height_tmp = output_height.float()
-    else:
-        output_height_tmp = output_height
+    output_width = image_data['origin_width']
+    output_height = image_data['origin_height']
 
     scale_x, scale_y = (
-        output_width_tmp / results.image_size[1],
-        output_height_tmp / results.image_size[0],
+        image_data['width'] / output_height ,
+        image_data['height'] / output_width,
     )
-    results = Instances((output_height, output_width), **results.get_fields())
+    results = Instances((output_height, output_width), **results)
 
     if results.has("pred_boxes"):
         output_boxes = results.pred_boxes

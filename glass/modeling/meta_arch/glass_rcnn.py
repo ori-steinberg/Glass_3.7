@@ -1,12 +1,10 @@
-from typing import List, Dict, Optional
-
 import torch
-
+from typing import List, Optional, Dict
 from detectron2.config import configurable
-from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
-from detectron2.modeling.meta_arch.rcnn import GeneralizedRCNN
 from detectron2.structures import Instances
 from glass.postprocess import build_post_processor
+from detectron2.modeling.meta_arch.rcnn import GeneralizedRCNN
+from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from glass.postprocess.post_processor_academic import detector_postprocess
 
 
@@ -78,27 +76,16 @@ class GlassRCNN(GeneralizedRCNN):
             Otherwise, a list[Instances] containing raw network outputs.
         """
         assert not self.training
-
         images = self.preprocess_image(batched_inputs)
+
         features = self.backbone(images.tensor)
+        proposals, _ = self.proposal_generator(images, features, None)
+        results, pred_text_prob = self.roi_heads(images.tensor, features, proposals, None)
 
-        if detected_instances is None:
-            if self.proposal_generator is not None:
-                proposals, _ = self.proposal_generator(images, features, None)
-            else:
-                assert "proposals" in batched_inputs[0]
-                proposals = [x["proposals"].to(self.device) for x in batched_inputs]
-
-            results, _ = self.roi_heads(images, features, proposals, None)
-        else:
-            detected_instances = [x.to(self.device) for x in detected_instances]
-            results = self.roi_heads.forward_with_given_boxes(features, detected_instances)
-
-        if do_postprocess:
-            assert not torch.jit.is_scripting(), "Scripting is not supported for postprocess."
-            return self._postprocess(results, batched_inputs, images.image_sizes)
-        else:
-            return results
+        results = [pred.get_fields() for pred in results]
+        for res in results:
+            res['pred_boxes'] = res['pred_boxes'].tensor
+        return tuple(results), pred_text_prob
 
     def _postprocess(self, instances, batched_inputs, image_sizes):
         """
@@ -110,19 +97,7 @@ class GlassRCNN(GeneralizedRCNN):
         for results_per_image, input_per_image, image_size in zip(
                 instances, batched_inputs, image_sizes
         ):
-
-            height = input_per_image.get("height", image_size[0])
-            width = input_per_image.get("width", image_size[1])
-            if self.filter_small_boxes:
-                results_per_image = self.post_processor.filter_small_boxes(results_per_image)
-            if self.inflate_ratio:
-                results_per_image = self.post_processor.resize_boxes(results_per_image, self.inflate_ratio)
-
-            if self.drop_overlapping_boxes:
-                results_per_image = self.post_processor.drop_overlapping_boxes(results_per_image,
-                                                                               self.ioa_threshold,
-                                                                               self.valid_score)
-            r = detector_postprocess(results_per_image, height, width)
+            r = detector_postprocess(results_per_image, input_per_image)
 
             processed_results.append({"instances": r})
         return processed_results

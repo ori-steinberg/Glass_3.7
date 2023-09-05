@@ -15,7 +15,6 @@ import shapely
 import torch
 from fvcore.common.file_io import PathManager
 from rasterio import features
-from shapely.geometry import Polygon
 from shapely.geometry import Polygon, LinearRing
 
 from detectron2.data import MetadataCatalog
@@ -398,20 +397,6 @@ def instances_to_coco_json(instances, file_name, text_encoder, onlyRemoveFirstLa
                     "score_detection": np.float64(score_detection).tolist()
                 }
                 results.append(result)
-            # else:
-            #     poly = rbox
-            #     result = {
-            #         "image_id": file_name,
-            #         "category_id": 1,
-            #         "polys": poly,
-            #         "boxes": box,
-            #         "rboxes": rbox,
-            #         "rec": rec,
-            #         "score": np.float64(score).tolist(),
-            #     }
-            #     results.append(result)
-            #     print('polygon size is 0, replacing it by rotated box')
-
     return results
 
 
