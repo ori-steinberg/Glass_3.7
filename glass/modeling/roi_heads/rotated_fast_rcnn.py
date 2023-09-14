@@ -362,9 +362,6 @@ class RotatedFastRCNNOutputs:
                 oriented_box = overwrite_orientations_on_boxes(box, orientation_values)
                 oriented_boxes.append(oriented_box)
             boxes = tuple(oriented_boxes)
-        # else:
-        #     boxes = [boxes]
-
         image_shapes = self.image_shapes
 
         return fast_rcnn_inference(

@@ -7,12 +7,12 @@ from typing import List
 import torch.nn.functional as F
 from detectron2.config import get_cfg
 from detectron2.modeling import build_model
+from glass.utils.visualizer import visualize
 from glass.utils.common_utils import rgb2grey
 from glass.postprocess import build_post_processor
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.structures import Instances, RotatedBoxes
 from glass.modeling.recognition.text_encoder import TextEncoder
-from Trax.Miscellaneous.Users.OriS.OCR.glass_det.glass_main.glass.utils.visualizer import visualize
 from glass.config import add_e2e_config, add_glass_config, add_dataset_config, add_post_process_config
 
 
