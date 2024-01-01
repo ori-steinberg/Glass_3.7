@@ -100,17 +100,15 @@ def fast_rcnn_inference_single_image_rotated(
         Same as `fast_rcnn_inference`, but for only one image.
     """
     valid_mask = torch.isfinite(boxes).all(dim=1) & torch.isfinite(scores).all(dim=1)
-    invalid_preds_are_found = not valid_mask.all()
-    if invalid_preds_are_found:
-        boxes = boxes[valid_mask]
-        scores = scores[valid_mask]
-        orientations = orientations[valid_mask] if orientations is not None else None
+    boxes = boxes[valid_mask]
+    scores = scores[valid_mask]
+    orientations = orientations[valid_mask] if orientations is not None else None
 
     scores = scores[:, :-1]  # Removing the score of the background class
     num_bbox_reg_classes = boxes.shape[1] // 5
     # Convert to Boxes to use the `clip` function ...
     boxes = RotatedBoxes(boxes.reshape(-1, 5))
-    boxes.clip(image_shape)
+    boxes.clip(image_shape[:2])
     boxes = boxes.tensor.view(-1, num_bbox_reg_classes, 5)  # R x C x 5
 
     # Filter results based on detection scores
@@ -339,7 +337,8 @@ class RotatedFastRCNNOutputs:
                 for all images in a batch. Element i has shape (Ri, K * B) or (Ri, B), where Ri is
                 the number of predicted objects for image i and B is the box dimension (4 or 5)
         """
-        return self.box2box_transform.apply_deltas(self.pred_proposal_deltas, self.proposals.tensor)
+        boxes = self.box2box_transform.apply_deltas(self.pred_proposal_deltas, self.proposals.tensor)
+        return boxes.split(self.num_preds_per_image, dim=0)
 
     def inference(self, score_thresh, nms_thresh, topk_per_image):
         """
@@ -363,14 +362,10 @@ class RotatedFastRCNNOutputs:
                 oriented_box = overwrite_orientations_on_boxes(box, orientation_values)
                 oriented_boxes.append(oriented_box)
             boxes = tuple(oriented_boxes)
-        else:
-            boxes = [boxes]
-
         image_shapes = self.image_shapes
 
         return fast_rcnn_inference(
-            boxes, scores, orientations, image_shapes, score_thresh, nms_thresh, topk_per_image
-        )
+            boxes, scores, orientations, image_shapes, score_thresh, nms_thresh, topk_per_image)
 
     def _log_accuracy(self):
         """

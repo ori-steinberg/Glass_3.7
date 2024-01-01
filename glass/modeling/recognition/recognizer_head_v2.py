@@ -154,13 +154,7 @@ class BaseRecognizerRCNNHead(nn.Module):
             encoded_features = self.encoder(features)
             preds = self.decoder(encoded_features)
 
-            num_boxes_per_image = [len(i) for i in instances]
-            preds = preds.split(num_boxes_per_image, dim=0)
-
-            for tmp_pred, tmp_instance in zip(preds, instances):
-                tmp_instance.pred_text_prob = tmp_pred
-
-            return instances
+            return instances, preds
 
     def layers(self, x):
         """

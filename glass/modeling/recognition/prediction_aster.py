@@ -70,7 +70,6 @@ class AttentionRecognitionHead(nn.Module):
 
         predicted_ids, predicted_scores, outputs, alphas = [], [], [], []
         dones = torch.zeros(batch_size).to(device, non_blocking=True)
-        outputs_ = torch.zeros(batch_size, lengths, self.num_classes_decoding, dtype=self.dtype).to(device, non_blocking=True)
         # Different devices can have different lengths so we create a tensor to hold the longest possible one
         for i in range(lengths):
             if i == 0:
@@ -83,20 +82,14 @@ class AttentionRecognitionHead(nn.Module):
             output_ = output[:, :self.num_classes_decoding]
             output_ = F.softmax(output_, dim=1)
             score, predicted = output_.max(1)
-            # predicted_ids.append(predicted.unsqueeze(1))
-            # predicted_scores.append(score.unsqueeze(1))
             outputs.append(output_.unsqueeze(1))
             alphas.append(alpha.unsqueeze(1))
 
             dones += (predicted == eos).type(torch.float)
             if dones.min() != 0:
                 break
-        # predicted_ids = torch.cat(predicted_ids, 1)
-        # predicted_scores = torch.cat(predicted_scores, 1)
         outputs = torch.cat(outputs, 1)
-        # return predicted_ids.squeeze(), predicted_scores.squeeze()
-        outputs_[:, :outputs.shape[1], :] = outputs
-        return outputs_, alphas
+        return outputs, alphas
 
     def beam_search(self, x, beam_width, eos):
 
