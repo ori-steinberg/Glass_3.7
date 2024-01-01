@@ -52,9 +52,19 @@ class GlassRCNN(GeneralizedRCNN):
 
         return ret
 
+    def forward(
+            self,
+            batched_inputs: torch.Tensor,
+            im_info: torch.Tensor = None
+    ):
+        if not self.training:
+            return self.inference(batched_inputs, im_info)
+        super().forward(batched_inputs)
+
     def inference(
             self,
-            batched_inputs: List[Dict[str, torch.Tensor]],
+            batched_inputs: torch.Tensor,
+            im_info: torch.Tensor = None,
             detected_instances: Optional[List[Instances]] = None,
             do_postprocess: bool = True,
     ):
@@ -76,16 +86,22 @@ class GlassRCNN(GeneralizedRCNN):
             Otherwise, a list[Instances] containing raw network outputs.
         """
         assert not self.training
-        images = self.preprocess_image(batched_inputs)
-
+        batch_size = batched_inputs.shape[0]
+        images = self.preprocess_image(batched_inputs, im_info)
         features = self.backbone(images.tensor)
         proposals, _ = self.proposal_generator(images, features, None)
         results, pred_text_prob = self.roi_heads(images.tensor, features, proposals, None)
-
         results = [pred.get_fields() for pred in results]
-        for res in results:
-            res['pred_boxes'] = res['pred_boxes'].tensor
-        return tuple(results), pred_text_prob
+        # concat all results across all images
+        pred_boxes = [x["pred_boxes"].tensor for x in results]
+        pred_scores = [x["scores"] for x in results]
+        pred_classes = [x["pred_classes"] for x in results]
+        pred_boxes = torch.cat(pred_boxes, dim=0).reshape(batch_size, -1, 5)
+        pred_scores = torch.cat(pred_scores, dim=0).reshape(batch_size, -1)
+        pred_classes = torch.cat(pred_classes, dim=0).reshape(batch_size, -1)
+        pred_text_shape = pred_text_prob["pred_text_prob"].shape[1:]
+        pred_text_prob = pred_text_prob["pred_text_prob"].reshape(batch_size, -1, *pred_text_shape)
+        return pred_boxes, pred_scores, pred_classes, pred_text_prob
 
     def _postprocess(self, instances, batched_inputs, image_sizes):
         """
