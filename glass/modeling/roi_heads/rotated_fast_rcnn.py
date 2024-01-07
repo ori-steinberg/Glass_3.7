@@ -108,7 +108,7 @@ def fast_rcnn_inference_single_image_rotated(
     num_bbox_reg_classes = boxes.shape[1] // 5
     # Convert to Boxes to use the `clip` function ...
     boxes = RotatedBoxes(boxes.reshape(-1, 5))
-    boxes.clip(image_shape[:2])
+    boxes.clip(image_shape)
     boxes = boxes.tensor.view(-1, num_bbox_reg_classes, 5)  # R x C x 5
 
     # Filter results based on detection scores

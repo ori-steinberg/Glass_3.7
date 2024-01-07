@@ -3,7 +3,7 @@ import cv2
 import torch
 import logging
 import numpy as np
-from typing import List
+from typing import List, Tuple
 import torch.nn.functional as F
 from detectron2.config import get_cfg
 from detectron2.modeling import build_model
@@ -11,7 +11,7 @@ from glass.utils.visualizer import visualize
 from glass.utils.common_utils import rgb2grey
 from glass.postprocess import build_post_processor
 from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.structures import Instances, RotatedBoxes
+from detectron2.structures import Instances, RotatedBoxes, ImageList
 from glass.modeling.recognition.text_encoder import TextEncoder
 from glass.config import add_e2e_config, add_glass_config, add_dataset_config, add_post_process_config
 
@@ -29,7 +29,7 @@ class GlassRunner:
         """
         # Loading and initializing the config
         self.logger = logging.getLogger(__name__)
-        cfg = self.prepare_cfg(config_path, opts)
+        self.cfg = self.prepare_cfg(config_path, opts)
 
         self.model_path = model_path
         self.config_path = config_path
@@ -60,7 +60,8 @@ class GlassRunner:
         self.text_encoder = TextEncoder(self.cfg)
         self.post_processor = build_post_processor(self.cfg)
 
-    def prepare_cfg(self, config_path: str, opts: List[str]) -> None:
+    @staticmethod
+    def prepare_cfg( config_path: str, opts: List[str]) -> None:
         cfg = get_cfg()
         add_e2e_config(cfg)
         add_glass_config(cfg)
@@ -68,12 +69,13 @@ class GlassRunner:
         add_post_process_config(cfg)
         cfg.merge_from_file(config_path)
         cfg.merge_from_list(opts or list())
-        self.cfg = cfg.clone()  # cfg can be modified by model
+        return cfg.clone()  # cfg can be modified by model
 
     def __call__(self, img_list: List[np.ndarray]) -> List[Instances]:
         input_data = self.preprocess(img_list)
+        img, im_info = self.convert_batched_inputs_to_c2_format(input_data, 32, self.device)
         with torch.no_grad():
-            raw_predictions = self.model(input_data)
+            raw_predictions = self.model(img, im_info)
         preds = self.post_run(raw_predictions, input_data)
         return preds
 
@@ -86,16 +88,29 @@ class GlassRunner:
                 original_image = rgb2grey(original_image, three_channels=True)
             image_height, image_width = original_image.shape[:2]
 
-            image_tensor, scale_ratio = self._image_to_tensor(original_image, self.model.device)
+            image_tensor, scale_ratio = self._image_to_tensor(original_image, self.device)
             height, width = image_tensor.shape[1:]
             inputs = {'image': image_tensor, 'height': height, 'width': width,
                       'scale_ratio': scale_ratio, 'origin_height': image_height, 'origin_width': image_width}
             input_data.append(inputs)
         return input_data
 
+    @staticmethod
+    def convert_batched_inputs_to_c2_format(batched_inputs: list, size_divisibility: int, device: torch.device) \
+            -> Tuple[torch.Tensor, torch.Tensor]:
+        assert all(isinstance(x, dict) for x in batched_inputs)
+        assert all(x["image"].dim() == 3 for x in batched_inputs)
+
+        images = [x["image"] for x in batched_inputs]
+        images = ImageList.from_tensors(images, size_divisibility)
+        im_info = torch.Tensor(images.image_sizes).to(device)
+        return images.tensor.to(device), im_info
+    
     def post_run(self, preds: List[dict], input_data: List[dict]) -> List[Instances]:
+        res_per_batch = self.split_preds_to_batches(preds)
+
         image_shape_list = [(img_data['origin_height'], img_data['origin_width']) for img_data in input_data]
-        preds = self.ConvertPredsToInstance(preds, image_shape_list)
+        preds = self.preds2instance(res_per_batch, image_shape_list)
         res = []
         for pred, img_data in zip(preds, input_data):
             scale_ratio = img_data.get('scale_ratio', 1)
@@ -105,26 +120,34 @@ class GlassRunner:
             res.append(pred)
         return res
 
+    def split_preds_to_batches(self, preds):
+        pred_boxes, pred_scores, pred_classes, pred_text_prob, results_n_per_batch = preds
+        start_idx = 0
+        res_per_batch = []
+        for res_len in results_n_per_batch:
+            res_per_batch.append([pred_boxes[start_idx: start_idx + res_len],
+                              pred_scores[start_idx: start_idx + res_len],
+                              pred_classes[start_idx: start_idx + res_len],
+                              pred_text_prob[start_idx: start_idx + res_len]])
+            start_idx += res_len
+        return res_per_batch
+
     @staticmethod
-    def ConvertPredsToInstance(preds_list: List, image_shape: List[tuple]) -> List[Instances]:
+    def preds2instance(preds_list: List, image_shape: List[tuple]) -> List[Instances]:
         """
         Args:
-            preds_list: contain two elements - list of the predictions, and dictionary contains the text probability tensor
+            preds_list: list contains list of the predictions[boxes, scores, classes, text_prob]
             image_shape: list of tuples (height, width)
 
         Returns: list of Instances
         """
-        preds, text_dict = preds_list
-        text_prob = text_dict['pred_text_prob']
-        cnt = 0
         res_list = []
-        for pred in preds:
-            result = Instances(image_shape)
-            result.pred_boxes = RotatedBoxes(pred['pred_boxes'])
-            result.scores = pred['scores']
-            result.pred_classes = pred['pred_classes']
-            result.pred_text_prob = text_prob[cnt: cnt + len(pred['pred_boxes'])]
-            cnt += len(pred['scores'])
+        for pred, img_size in zip(preds_list, image_shape):
+            result = Instances(img_size)
+            result.pred_boxes = RotatedBoxes(pred[0])
+            result.scores = pred[1]
+            result.pred_classes = pred[2]
+            result.pred_text_prob = pred[3]
             res_list.append(result)
         return res_list
 

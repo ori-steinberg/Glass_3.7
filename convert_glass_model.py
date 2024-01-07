@@ -1,7 +1,6 @@
 import os
 import cv2
 import torch
-import os.path as osp
 from time import time
 from typing import List
 from torch.quantization import quantize_dynamic_jit
@@ -9,6 +8,7 @@ from torch.quantization import per_channel_dynamic_qconfig
 from glass_det.glass_main.glass.inference.glass_runner import GlassRunner
 from glass_det.glass_main.glass.modeling.recognition.prediction_aster import device
 from detectron2.structures import ImageList
+from patches import apply_patches
 
 
 def convert_batched_inputs_to_c2_format(batched_inputs, size_divisibility, device):
@@ -38,7 +38,8 @@ def convert_batched_inputs_to_c2_format(batched_inputs, size_divisibility, devic
 
     return images.tensor.to(device), im_info.to(device)
 
-def compare_model_size(origin_model, quantized_model):
+def compare_model_size(origin_model: torch.jit._trace.TopLevelTracedModule,
+                       quantized_model: torch.jit._trace.TopLevelTracedModule) -> None:
     print("Size of model before quantization")
     print_size_of_model(origin_model)
     print("Size of model after quantization")
@@ -72,27 +73,23 @@ def model_test(loaded_model):
         ts = time()
         with torch.no_grad():
             preds = loaded_model(input_data)
-            # preds = loaded_model(input_data)
         time_per_batch.append({img_paths[0]: [round(time()) - ts, data[0].shape[:2], len(preds[0][0]['scores'])]})
         if plot:
-            # image_shape_list = [image.shape[:2] for image in data]
             image_shape_list = [{name: val for name, val in zip(['origin_height', 'origin_width'], image.shape[:2])} for image in data]
             pred_data = glass_model.post_run(preds, image_shape_list)
             glass_model.plot_img(data, img_paths, out_path, pred_data)
     return time_per_batch
 
-def RunConvertedModel(onnx_file: str, dummy_input: List[dict], ONNX: bool, _device: str = 'cpu') -> None:
-    if not ONNX:
-        loaded_model = torch.jit.load(onnx_file)
-        time_per_batch = model_test(loaded_model)
-        return
+def run_converted_model(onnx_file: str, _device: str = 'cpu') -> None:
+    loaded_model = torch.jit.load(onnx_file)
+    time_per_batch = model_test(loaded_model)
+    print(f'Avg. time per batch - {time_per_batch}')
 
-def ConvertGlassModel2Script(config_path: str, file_save_path: str, dummy_input: List[dict], ONNX: bool, quantisize: bool = False) -> None:
+def convert_glass_model2Script(config_path: str, file_save_path: str, dummy_input: List[dict], quantisize: bool = False) -> None:
     glass_model = build_glass_model(config_path)
     device = glass_model.model.device
     size_divisibility = glass_model.model.backbone.size_divisibility
     converted_inputs = convert_batched_inputs_to_c2_format(dummy_input, size_divisibility, device)
-    # export_tracing(glass_model.model, dummy_input)
     scripted_model = torch.jit.trace(glass_model.model, converted_inputs, check_trace=True, strict=False)
     if quantisize:
         scripted_model = quantize_dynamic_jit(scripted_model, {'': per_channel_dynamic_qconfig})
@@ -100,30 +97,33 @@ def ConvertGlassModel2Script(config_path: str, file_save_path: str, dummy_input:
     print('Finish Converting model 🥳🥳🥳\nFile location - ', file_save_path)
 
 def build_glass_model(config_dir: str=None):
-    model_path = '/Users/ido.nahum/engineCache/Apps/ocr/metadata/assets/glass_textocr.pth'
+    model_path = user_path + '/engineCache/Apps/ocr/metadata/assets/glass_textocr.pth'
     config_path = config_dir + ('glass_finetune_textocr_cpu.yaml' if device.type == 'cpu' else 'glass_finetune_textocr_cuda.yaml')
     glass_runner = GlassRunner(model_path=model_path, config_path=config_path, post_process=True)
     return glass_runner
 
-
-base_path = '/Users/ido.nahum/dev/triton_pytorch/detectron2/glass_det/'
+user_path = os.path.expanduser('~')
+base_path = user_path + '/dev/triton_pytorch/detectron2/glass_det/'
 test_param = {
-    'plot': True,
-    'out_path': base_path + 'compare_dir/GLASS/patches/diageous/quant',
-    'config_dir': base_path + 'glass_main/configs/',
-    'in_path': base_path + 'compare_dir/data/patches/diageous/',
+    'onnx': False,
+    'plot': False,
+    'quantisize': True,
     'batch_size': 1,
-    'sample_path': base_path + '1005741.jpg'
+    'in_path': base_path + 'compare_dir/data/patches/diageous/',
+    'out_path': base_path + 'compare_dir/GLASS/patches/diageous/quant/',
+    'config_dir': base_path + 'glass_main/configs/',
+    'sample_path': base_path + '1005741.jpg',
+    'nms_rotated_path': user_path + "/miniconda/base/envs/detectron2/lib/python3.8/site-packages/detectron2/_C.cpython-38-darwin.so"
 }
 if __name__ == '__main__':
-    from patches import apply_patches
     apply_patches()
-    torch.ops.load_library("/usr/local/Caskroom/miniconda/base/envs/detectron2/lib/python3.8/site-packages/detectron2/_C.cpython-38-darwin.so")
-    ONNX = False
+    torch.ops.load_library(test_param['nms_rotated_path'])
+
+    ONNX = test_param['onnx']
     suffix = '.onnx' if ONNX else '.pt'
     model_path = base_path + "glass_model_cpu" + suffix
 
     imgs = [cv2.imread(test_param['sample_path']), cv2.imread(test_param['sample_path'])]
     dummy_input = [{'image': torch.as_tensor(img.transpose((2, 0, 1)))} for img in imgs]
-    ConvertGlassModel2Script(test_param['config_dir'], model_path, dummy_input, ONNX)
-    # RunConvertedModel(model_path, dummy_input, ONNX)
+    convert_glass_model2Script(test_param['config_dir'], model_path, dummy_input, test_param['quantisize'])
+    # run_converted_model(model_path, dummy_input)
