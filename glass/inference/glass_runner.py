@@ -106,7 +106,7 @@ class GlassRunner:
         im_info = torch.Tensor(images.image_sizes).to(device)
         return images.tensor.to(device), im_info
     
-    def post_run(self, preds: List[dict], input_data: List[dict]) -> List[Instances]:
+    def post_run(self, preds: List[torch.Tensor], input_data: List[dict]) -> List[Instances]:
         res_per_batch = self.split_preds_to_batches(preds)
 
         image_shape_list = [(img_data['origin_height'], img_data['origin_width']) for img_data in input_data]
@@ -116,7 +116,8 @@ class GlassRunner:
             scale_ratio = img_data.get('scale_ratio', 1)
             if scale_ratio != 1:
                 pred.pred_boxes.scale(1 / scale_ratio, 1 / scale_ratio)
-            pred = self.post_processor(pred)
+            pred.pred_polygons = self.post_processor.boxes_to_polygons(pred.pred_boxes.tensor)
+            # pred = self.post_processor(pred)
             res.append(pred)
         return res
 
