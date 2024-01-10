@@ -96,12 +96,12 @@ class GlassRCNN(GeneralizedRCNN):
         pred_boxes = [x["pred_boxes"].tensor for x in results]
         pred_scores = [x["scores"] for x in results]
         pred_classes = [x["pred_classes"] for x in results]
-        pred_boxes = torch.cat(pred_boxes, dim=0).reshape(batch_size, -1, 5)
-        pred_scores = torch.cat(pred_scores, dim=0).reshape(batch_size, -1)
-        pred_classes = torch.cat(pred_classes, dim=0).reshape(batch_size, -1)
-        pred_text_shape = pred_text_prob["pred_text_prob"].shape[1:]
-        pred_text_prob = pred_text_prob["pred_text_prob"].reshape(batch_size, -1, *pred_text_shape)
-        return pred_boxes, pred_scores, pred_classes, pred_text_prob
+        results_n_per_batch = torch.tensor([res.size(0) for res in pred_scores], dtype=torch.int32)
+        pred_boxes = torch.cat(pred_boxes, dim=0).reshape(-1, 5)
+        pred_scores = torch.cat(pred_scores, dim=0).reshape(-1)
+        pred_classes = torch.cat(pred_classes, dim=0).reshape(-1)
+        pred_text_prob = pred_text_prob["pred_text_prob"]
+        return pred_boxes, pred_scores, pred_classes, pred_text_prob, results_n_per_batch
 
     def _postprocess(self, instances, batched_inputs, image_sizes):
         """
